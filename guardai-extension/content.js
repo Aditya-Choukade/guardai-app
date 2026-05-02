@@ -50,12 +50,12 @@ document.addEventListener("click", async (e) => {
   showOverlay({ status: "loading", url: href });
 
   try {
-    const res = await fetch(`${API_BASE}/analyze/url`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: href })
+    const data = await chrome.runtime.sendMessage({
+      type: "ANALYZE_URL",
+      url: href
     });
-    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
 
     if (data.verdict === "Safe") {
       removeOverlay();

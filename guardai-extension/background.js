@@ -74,3 +74,22 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     }).catch(() => {});
   }
 });
+
+// Listen for messages from content scripts
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "ANALYZE_URL") {
+    fetch(`${API_BASE}/analyze/url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: message.url })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+      return res.json();
+    })
+    .then(data => sendResponse(data))
+    .catch(err => sendResponse({ error: err.message }));
+    
+    return true; // Keep message channel open for async response
+  }
+});
