@@ -1,0 +1,92 @@
+[
+  {
+    "id": 1,
+    "message": "Your UPI is blocked. Verify at http://upi-verify-now.com or lose access.",
+    "url_scan_results": [
+      {
+        "url": "http://upi-verify-now.com",
+        "virustotal_score": "12/72",
+        "domain_age_days": 2
+      }
+    ],
+    "expected_verdict": "Dangerous"
+  },
+  {
+    "id": 2,
+    "message": "You won Rs 1,00,000. Share OTP to claim prize.",
+    "url_scan_results": [],
+    "expected_verdict": "Dangerous"
+  },
+  {
+    "id": 3,
+    "message": "Dear customer, your KYC expires today. Click http://sbi-kyc-portal.xyz",
+    "url_scan_results": [
+      {
+        "url": "http://sbi-kyc-portal.xyz",
+        "virustotal_score": "5/72",
+        "domain_age_days": 1
+      }
+    ],
+    "expected_verdict": "Dangerous"
+  },
+  {
+    "id": 4,
+    "message": "ICICI Bank: Your OTP is 847291. Do not share this with anyone.",
+    "url_scan_results": [],
+    "expected_verdict": "Safe"
+  },
+  {
+    "id": 5,
+    "message": "Hi, can we reschedule our meeting to 4pm tomorrow?",
+    "url_scan_results": [],
+    "expected_verdict": "Safe"
+  },
+  {
+    "id": 6,
+    "message": "Your Amazon order #3421 has been dispatched. Track at amzn.in/track",
+    "url_scan_results": [
+      {
+        "url": "http://amzn.in/track",
+        "virustotal_score": "0/72",
+        "domain_age_days": 3000
+      }
+    ],
+    "expected_verdict": "Safe"
+  },
+  {
+    "id": 7,
+    "message": "Congratulations! HDFC lucky draw winner. Call 9876543210 to claim.",
+    "url_scan_results": [],
+    "expected_verdict": "Dangerous"
+  },
+  {
+    "id": 8,
+    "message": "Your electricity bill of Rs 2340 is due. Pay at https://mahadiscom.in",
+    "url_scan_results": [
+      {
+        "url": "https://mahadiscom.in",
+        "virustotal_score": "0/72",
+        "domain_age_days": 4500
+      }
+    ],
+    "expected_verdict": "Safe"
+  },
+  {
+    "id": 9,
+    "message": "FREE RECHARGE! Get Rs 500 credit. Confirm your bank PIN to activate.",
+    "url_scan_results": [],
+    "expected_verdict": "Dangerous"
+  },
+  {
+    "id": 10,
+    "message": "Income Tax Dept: File ITR or face penalty. Visit incometax.gov.in",
+    "url_scan_results": [
+      {
+        "url": "http://incometax.gov.in",
+        "virustotal_score": "0/72",
+        "domain_age_days": 5000
+      }
+    ],
+    "expected_verdict": "Suspicious"
+  }
+]

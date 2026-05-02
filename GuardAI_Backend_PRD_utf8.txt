@@ -1,0 +1,517 @@
+GuardAI
+Backend Product Requirements Document
+AI-powered scam detection API — English MVP
+Antigravity Hackathon  |  Version 1.0  |  Build Phase
+Product
+GuardAI — Scam Detection API
+Document type
+Backend PRD (Hackathon Edition)
+Version
+1.0 — English-only MVP
+Event
+Antigravity Hackathon — Builder Round
+Stack
+FastAPI · Claude Sonnet · VirusTotal · SQLite (optional)
+Deploy target
+Railway / Render (free tier)
+API base URL
+https://api.guardai.app  |  localhost:8000 (local)
+Status
+Pre-build — ready for implementation
+1. Product overview
+GuardAI is a stateless REST API that classifies user-submitted text messages and URLs as Safe, Suspicious, or Dangerous using Claude Sonnet. Every response includes a plain-English explanation of the threat, structured flag tags, and an actionable next step for the user.
+The backend is the single source of truth for all intelligence. The React frontend, and any future browser extension, are thin clients that call one endpoint — /analyze — and render the response.
+NOTE
+This PRD covers the English-only MVP. Multilingual support (Hindi, Hinglish, regional languages) is a post-hackathon addition and is explicitly out of scope here.
+1.1 Design principles
+Stateless by default — no user accounts, no scan history, no database required for core functionality
+Single endpoint philosophy — /analyze handles everything; internal complexity is hidden from the client
+Claude sees the full picture — message text and URL scan results are sent to Claude together in one prompt, not in separate calls
+Fail gracefully — if VirusTotal is rate-limited or unavailable, Claude still returns a verdict based on message content alone
+Demo reliability first — every edge case must degrade cleanly, never throw a 500 during a live demo
+1.2 North star
+GOAL
+A judge pastes a scam SMS into the demo UI, hits Analyze, and within 5 seconds sees a Dangerous verdict with a specific, accurate English explanation — without any manual configuration.
+2. System architecture
+2.1 Component overview
+The backend consists of three logical layers that run in sequence on every /analyze request:
+Layer
+Component
+Responsibility
+Ingestion
+FastAPI endpoint
+Validates input, extracts URLs, dispatches parallel sub-tasks
+Intelligence
+VirusTotal + WHOIS
+URL reputation, domain age check, known-bad hash lookup
+Intelligence
+Claude Sonnet
+Reads message + URL results, returns structured JSON verdict
+Response
+Response builder
+Merges all outputs into unified API response shape
+2.2 Request processing order
+When a POST /analyze request arrives, the backend executes this sequence:
+Step 1 — Input validation: reject empty strings, strip whitespace, enforce 4000-char max
+Step 2 — URL extraction: regex scan of text for all http/https URLs
+Step 3 — Parallel intelligence: fire VirusTotal + WHOIS calls for each URL concurrently (asyncio.gather)
+Step 4 — Unified Claude call: send message text + all URL scan results in one structured prompt
+Step 5 — Response assembly: merge Claude output with raw URL data into final response shape
+Step 6 — Return: respond within 5-second SLA; log processing_ms
+WHY
+Sending everything to Claude in one call produces better verdicts than two separate calls. Claude can reason that a message claiming urgency plus a 3-day-old domain is Dangerous, when each signal alone might only be Suspicious.
+2.3 Tech stack
+Layer
+Technology
+Rationale
+Runtime
+Python 3.11
+Best ecosystem for AI + async HTTP
+Framework
+FastAPI
+Auto-generates OpenAPI docs; async-native; zero config
+AI model
+Claude Sonnet 4
+Best accuracy on ambiguous threat signals; structured JSON output
+URL intel
+VirusTotal API (free)
+70+ antivirus engines; no cost for demo volume
+Domain check
+python-whois
+Domain age < 30 days flagged automatically; no API key needed
+HTTP client
+httpx (async)
+Async VirusTotal + WHOIS calls in parallel
+Validation
+Pydantic v2
+FastAPI native; strict type enforcement; clean error messages
+Database
+None (MVP)
+Stateless API; SQLite added only if scan logging required
+Deploy
+Railway / Render
+Free tier; zero-config Python deploys; live URL for judges
+Env config
+python-dotenv
+ANTHROPIC_API_KEY + VIRUSTOTAL_API_KEY from .env
+3. API specification
+All endpoints return JSON. All error responses follow the RFC 7807 Problem Details format. Base URL: https://api.guardai.app
+3.1  POST /analyze
+POST
+/analyze
+Core endpoint — analyze message text and embedded URLs
+Request body
+Field
+Type
+Required
+Description
+text
+string
+Yes
+The message to analyze. Max 4000 characters.
+Example request
+  
+POST /analyze
+Content-Type: application/json
+{
+  "text": "Congratulations! You won Rs 50,000.
+           Click http://icici-kyc-verify.xyz to claim."
+}
+Response schema
+Field
+Type
+Nullable
+Description
+verdict
+string
+No
+Safe | Suspicious | Dangerous
+confidence
+float
+No
+0.0 to 1.0 — Claude's confidence in verdict
+explanation
+string
+No
+Plain-English explanation citing the specific red flag
+flags
+string[]
+No
+Array of threat tag strings (see Section 3.5)
+urls_found
+object[]
+No
+Array of URL scan results (empty if no URLs in text)
+action
+string
+No
+What the user should do next
+processing_ms
+integer
+No
+Total server-side processing time in milliseconds
+urls_found object schema
+Field
+Type
+Nullable
+Description
+url
+string
+No
+The extracted URL string
+virustotal_score
+string
+Yes
+e.g. '14/72' — engines flagged / total engines
+domain_age_days
+integer
+Yes
+Days since domain registration. Null if lookup fails.
+url_verdict
+string
+No
+Safe | Suspicious | Dangerous verdict for this URL alone
+Example response — Dangerous
+  
+{
+  "verdict": "Dangerous",
+  "confidence": 0.96,
+  "explanation": "This message claims you won a prize and
+                  requests action via a link — a classic advance-fee
+                  scam. The linked domain was registered 3 days ago",
+  "flags": ["prize_scam", "suspicious_url", "urgency_pressure"],
+  "urls_found": [
+    {
+      "url": "http://icici-kyc-verify.xyz",
+      "virustotal_score": "14/72",
+      "domain_age_days": 3,
+      "url_verdict": "Dangerous"
+    }
+  ],
+  "action": "Do not click. Block sender. Report at cybercrime.gov.in",
+  "processing_ms": 1840
+}
+Example response — Safe
+  
+{
+  "verdict": "Safe",
+  "confidence": 0.91,
+  "explanation": "This appears to be a standard OTP message from
+                  a known sender. No suspicious links or requests.",
+  "flags": [],
+  "urls_found": [],
+  "action": "No action needed. This message looks legitimate.",
+  "processing_ms": 980
+}
+3.2  POST /analyze/url
+POST
+/analyze/url
+Standalone URL scanner — used by browser extension
+Scans a single URL via VirusTotal + WHOIS. Claude is called as a fallback if VirusTotal returns no data. This endpoint is called internally by /analyze and is also exposed for the future browser extension right-click flow.
+Request body
+Field
+Type
+Required
+Description
+url
+string
+Yes
+The URL to scan. Must be a valid http or https URL.
+  
+POST /analyze/url
+Content-Type: application/json
+{ "url": "http://sbi-kyc-portal.xyz" }
+  
+{
+  "url": "http://sbi-kyc-portal.xyz",
+  "verdict": "Dangerous",
+  "virustotal_score": "9/72",
+  "domain_age_days": 7,
+  "registrar": "NameCheap",
+  "flags": ["suspicious_url", "newly_registered_domain"],
+  "explanation": "Domain registered 7 days ago. Flagged by 9 engines."
+}
+3.3  GET /health
+GET
+/health
+Liveness check — verify backend and dependency status
+Returns 200 if the service is live. Checks reachability of Claude API and VirusTotal. Use this during the demo to show judges a live production backend.
+  
+{
+  "status": "ok",
+  "claude": "reachable",
+  "virustotal": "reachable",
+  "version": "1.0.0",
+  "uptime_seconds": 3842
+}
+3.4  GET /examples
+GET
+/examples
+Returns pre-built demo examples for home screen chips
+Provides the three hardcoded demo messages that power the example chips on the home screen. Keeping these on the backend means the frontend never needs to be updated when examples change.
+  
+{
+  "examples": [
+    {
+      "id": "fake_upi",
+      "label": "Fake UPI Alert",
+      "text": "Your UPI is blocked. Verify at http://upi-verify-now.com"
+    },
+    {
+      "id": "prize_scam",
+      "label": "Prize Scam",
+      "text": "You won Rs 1,00,000! Share OTP to claim your prize."
+    },
+    {
+      "id": "phishing_url",
+      "label": "Phishing URL",
+      "text": "KYC pending. Update now: http://sbi-kyc-portal.xyz"
+    }
+  ]
+}
+3.5 Threat flag taxonomy
+Claude returns flags from this fixed set. The frontend renders each flag as a chip on the verdict card. Restricting to a fixed set prevents Claude from inventing inconsistent labels.
+Flag value
+Meaning
+otp_request
+Message asks for an OTP, PIN, or password
+urgency_pressure
+Creates artificial time pressure ('act now', 'expires today')
+fake_sender
+Impersonates a bank, government body, or known brand
+suspicious_url
+URL flagged by VirusTotal or has anomalous characteristics
+newly_registered_domain
+Domain registered within the last 30 days
+prize_scam
+Claims user has won a lottery, prize draw, or cashback
+kyc_fraud
+Falsely claims KYC verification is required or will expire
+impersonation
+Pretends to be a person of authority (bank manager, government officer)
+malware_link
+URL confirmed malicious by 5+ VirusTotal engines
+4. Claude prompt architecture
+The quality of every verdict depends entirely on this prompt. Spend the first 90 minutes of the build session getting this right with the test corpus before writing any other code.
+4.1 System prompt
+  
+You are a cyber-fraud detection expert specializing in Indian
+digital scam patterns: UPI fraud, fake KYC, phishing via
+WhatsApp/SMS, prize scams, and bank impersonation.
+You will receive a JSON object with:
+  - "message": the text to analyze
+  - "url_scan_results": array of VirusTotal/WHOIS results
+                        for any URLs found in the message
+Return ONLY a valid JSON object with this exact structure:
+{
+  "verdict": "Safe" | "Suspicious" | "Dangerous",
+  "confidence": <float 0.0-1.0>,
+  "explanation": "<2 sentences max. Cite the specific red flag.",
+  "flags": [<flag strings from allowed list only>],
+  "action": "<what the user should do next>"
+}
+Allowed flags: otp_request, urgency_pressure, fake_sender,
+suspicious_url, newly_registered_domain, prize_scam,
+kyc_fraud, impersonation, malware_link
+Rules:
+- Dangerous = clear fraud intent OR confirmed malicious URL
+- Suspicious = partial signals, not conclusive
+- Safe = no threat signals; legitimate communication pattern
+- Legitimate OTP from a known bank format → lean Safe
+- Never return markdown. Return only valid JSON. No preamble.
+4.2 User message shape
+  
+{
+  "message": "Congratulations! You won Rs 50,000. Click...",
+  "url_scan_results": [
+    {
+      "url": "http://icici-kyc-verify.xyz",
+      "virustotal_score": "14/72",
+      "domain_age_days": 3
+    }
+  ]
+}
+4.3 Pre-build test corpus (run before any UI work)
+Build this as a JSON file and run all 20 cases against the classifier before moving to UI. If accuracy is below 85%, fix the prompt first.
+#
+Message sample
+Expected verdict
+Key test
+1
+Your UPI is blocked. Verify at http://upi-verify-now.com or lose access.
+Dangerous
+Urgency + URL
+2
+You won Rs 1,00,000. Share OTP to claim prize.
+Dangerous
+Prize + OTP
+3
+Dear customer, your KYC expires today. Click http://sbi-kyc-portal.xyz
+Dangerous
+KYC + new domain
+4
+ICICI Bank: Your OTP is 847291. Do not share this with anyone.
+Safe
+False positive check
+5
+Hi, can we reschedule our meeting to 4pm tomorrow?
+Safe
+Normal message
+6
+Your Amazon order #3421 has been dispatched. Track at amzn.in/track
+Safe
+Legitimate brand URL
+7
+Congratulations! HDFC lucky draw winner. Call 9876543210 to claim.
+Dangerous
+Prize + impersonation
+8
+Your electricity bill of Rs 2340 is due. Pay at https://mahadiscom.in
+Safe
+Legit bill notice
+9
+FREE RECHARGE! Get Rs 500 credit. Confirm your bank PIN to activate.
+Dangerous
+PIN request
+10
+Income Tax Dept: File ITR or face penalty. Visit incometax.gov.in
+Suspicious
+Legit URL, urgency tone
+5. Error handling
+All errors follow RFC 7807 Problem Details. Never return a plain string error — always return a JSON object so the frontend can handle it consistently.
+HTTP code
+Error type
+When it fires
+400
+invalid_input
+Empty text, text > 4000 chars, or missing required field
+422
+validation_error
+Pydantic schema violation (wrong type, missing field)
+429
+rate_limited
+VirusTotal free tier rate limit hit — Claude-only verdict returned
+503
+claude_unavailable
+Claude API unreachable — retry after 2s with exponential backoff
+500
+internal_error
+Unexpected exception — returns safe fallback, logs full trace
+CRITICAL
+On VirusTotal 429 rate limit, do NOT return an error to the client. Silently fall back to Claude-only verdict and set virustotal_score to null. The demo must never fail because of a rate limit.
+Standard error response shape
+  
+{
+  "type": "invalid_input",
+  "title": "Text field is required",
+  "status": 400,
+  "detail": "The text field must be a non-empty string."
+}
+6. Performance requirements
+P95 response time
+< 5 seconds end-to-end (including Claude call)
+URL scans
+VirusTotal + WHOIS run in parallel via asyncio.gather — not sequentially
+Claude timeout
+8 second hard timeout; if exceeded, return Suspicious verdict with explanation
+In-memory URL cache
+Cache VirusTotal results by URL hash for 15 minutes — prevents rate limits during demo
+Max input length
+4000 characters; reject with 400 above this
+Concurrent requests
+10 simultaneous /analyze calls on Railway free tier
+7. Project structure
+  
+guardai-backend/
+├── main.py                  # FastAPI app, route definitions
+├── models.py                # Pydantic request/response schemas
+├── classifier.py            # Claude prompt logic, response parsing
+├── url_scanner.py           # VirusTotal + WHOIS integration
+├── examples.py              # Hardcoded demo example data
+├── cache.py                 # In-memory URL result cache
+├── tests/
+│   ├── test_corpus.json     # 20 labeled scam examples
+│   └── run_corpus.py        # Accuracy validator — run before UI work
+├── .env                     # ANTHROPIC_API_KEY, VIRUSTOTAL_API_KEY
+├── requirements.txt
+└── README.md
+7.1 requirements.txt
+  
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+anthropic==0.26.0
+httpx==0.27.0
+python-whois==0.9.4
+pydantic==2.7.0
+python-dotenv==1.0.1
+8. Build order
+This is the sequence to follow during the hackathon build session. Stop when time runs out — earlier phases are more important than later ones.
+Phase
+What to build
+Done when
+Time budget
+P1
+Prompt + test corpus
+85%+ accuracy on 20 test messages
+90 min
+P2
+POST /analyze endpoint
+Returns correct JSON for 3 demo examples
+60 min
+P3
+VirusTotal + WHOIS
+URL verdict appears in response alongside message verdict
+60 min
+P4
+GET /health + /examples
+Frontend can connect and load example chips
+30 min
+P5
+Rate limit + error handling
+429 from VT fails gracefully; 500s never reach client
+30 min
+P6
+Deploy to Railway/Render
+Live HTTPS URL accessible by judges from their laptop
+30 min
+9. Risk register
+HIGH
+Claude returns inconsistent verdicts on edge cases
+Especially OTP messages from legitimate banks may be incorrectly flagged as Dangerous.
+Mitigation: Run the full test corpus before writing any UI code. If accuracy < 85%, refine the system prompt. Do not proceed to P2 until P1 passes.
+HIGH
+VirusTotal rate limit during live demo
+Free tier allows 4 requests/minute. A judge testing multiple URLs in quick succession will hit the limit.
+Mitigation: Implement 15-minute in-memory cache keyed by URL. On 429, silently return Claude-only verdict. Never surface rate limit errors to the user.
+MED
+Claude API response is not valid JSON
+Rarely, Claude may include preamble text or markdown fences around the JSON block.
+Mitigation: Wrap JSON parse in try/except. Strip ```json fences before parsing. If parse fails after 2 retries, return a Suspicious verdict with a generic explanation.
+MED
+WHOIS lookup fails or times out
+Some TLDs do not have consistent WHOIS coverage. Timeouts can add 2-3 seconds to response time.
+Mitigation: Set a 2-second hard timeout on all WHOIS calls. Treat a timeout as domain_age_days: null — do not fail the overall request.
+LOW
+Slow cold start on Railway/Render free tier
+Free tier instances spin down after 15 minutes of inactivity. First request after sleep can take 10-30 seconds.
+Mitigation: Keep the /health endpoint warm with a simple cron ping. Alternatively, wake the instance before the demo starts.
+10. Acceptance criteria
+The backend is demo-ready when all of the following pass:
+MUST
+POST /analyze returns a valid response within 5 seconds for all 3 demo example messages
+MUST
+Dangerous verdict returned for fake UPI, prize scam, and phishing URL examples
+MUST
+Safe verdict returned for the ICICI OTP false-positive test case
+MUST
+VirusTotal 429 rate limit degrades gracefully — no 500 error reaches the client
+MUST
+GET /health returns 200 with claude: reachable from a live HTTPS URL
+SHOULD
+urls_found array correctly populated when message contains an embedded URL
+SHOULD
+domain_age_days correctly returned and newly_registered_domain flag set for domains < 30 days
+NICE
+processing_ms logged and returned in every response for performance transparency
+The one rule that overrides everything in this document:
+Run the test corpus first. If the classifier is wrong, nothing else matters.

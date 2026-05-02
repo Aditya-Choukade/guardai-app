@@ -1,0 +1,7 @@
+{
+  "css.lint.unknownAtRules": "ignore",
+  "python.defaultInterpreterPath": "${workspaceFolder}/guardai-backend/venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/guardai-backend"
+  ]
+}
